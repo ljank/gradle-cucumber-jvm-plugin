@@ -10,8 +10,6 @@ import org.gradle.api.file.FileTree
 import org.gradle.api.logging.Logger
 import org.gradle.api.tasks.SourceSet
 
-import java.nio.file.Path
-import java.nio.file.Paths
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -54,15 +52,16 @@ class CucumberRunner {
         AtomicBoolean hasFeatureParseErrors = new AtomicBoolean(false)
 
         def features = findFeatures(sourceSet)
+        def batchSize = (int) Math.ceil(features.files.size() / options.maxParallelForks)
 
         testResultCounter.beforeSuite(features.files.size())
         GParsPool.withPool(options.maxParallelForks) {
-            features.files.eachParallel { File featureFile ->
-                String featureName = getFeatureNameFromFile(featureFile, sourceSet)
-                File resultsFile = new File(resultsDir, "${featureName}.json")
-                File consoleOutLogFile = new File(resultsDir, "${featureName}-out.log")
-                File consoleErrLogFile = new File(resultsDir, "${featureName}-err.log")
-                File junitResultsFile = new File(resultsDir, "${featureName}.xml")
+            features.files.collate(batchSize).eachWithIndexParallel { featureBatch, batchId ->
+                def runId = "feature-batch-${batchId}"
+                File resultsFile = new File(resultsDir, "${runId}.json")
+                File consoleOutLogFile = new File(resultsDir, "${runId}-out.log")
+                File consoleErrLogFile = new File(resultsDir, "${runId}-err.log")
+                File junitResultsFile = new File(resultsDir, "${runId}.xml")
 
                 List<String> args = []
                 applyGlueArguments(args)
@@ -72,7 +71,9 @@ class CucumberRunner {
                 applyStrictArguments(args)
                 applyTagsArguments(args)
                 applySnippetArguments(args)
-                args << featureFile.absolutePath
+                featureBatch.each { featureFile ->
+                    args << featureFile.absolutePath
+                }
 
                 new JavaProcessLauncher('cucumber.api.cli.Main', sourceSet.runtimeClasspath.toList())
                         .setArgs(args)
@@ -107,17 +108,6 @@ class CucumberRunner {
 
     private boolean isResultFileEmpty(File resultsFile) {
         resultsFile.size() < EMPTY_RESULT_FILE_MAX_SIZE_IN_BYTES && resultsFile.text.replaceAll(/\s+/, '') == '[]'
-    }
-
-    String getFeatureNameFromFile(File file, SourceSet sourceSet) {
-        String featureName = file.name
-        sourceSet.resources.srcDirs.each { File resourceDir ->
-            if (isFileChildOfDirectory(file, resourceDir)) {
-                featureName = convertPathToPackage(getReleativePath(file, resourceDir))
-            }
-        }
-
-        return featureName
     }
 
     List<Feature> parseFeatureResult(File jsonReport) {
@@ -240,19 +230,5 @@ class CucumberRunner {
                 log.error('{}:\r\n {}', sourceSet.name, consoleOutLogFile.text)
             }
         }
-    }
-
-    private String convertPathToPackage(Path path) {
-        return path.toString().replace(File.separator, '.')
-    }
-
-    private Path getReleativePath(File file, File dir) {
-        return Paths.get(dir.toURI()).relativize(Paths.get(file.toURI()))
-    }
-
-    private boolean isFileChildOfDirectory(File file, File dir) {
-        Path child = Paths.get(file.toURI())
-        Path parent = Paths.get(dir.toURI())
-        return child.startsWith(parent)
     }
 }
