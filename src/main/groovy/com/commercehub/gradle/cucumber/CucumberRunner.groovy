@@ -49,6 +49,9 @@ class CucumberRunner {
     }
 
     boolean run(SourceSet sourceSet, File resultsDir, File reportsDir) {
+        resultsDir.deleteDir()
+        resultsDir.mkdirs()
+
         AtomicBoolean hasFeatureParseErrors = new AtomicBoolean(false)
 
         def features = findFeatures(sourceSet)
